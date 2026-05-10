@@ -177,13 +177,22 @@
     .cruise-compare strong { font-family: Consolas,Monaco,monospace; min-width: 45px; text-align: right; }
     .cruise-compare .match { color: #2e7d32; }
     .cruise-compare .diff { color: #c62828; }
+    .test-panel {
+      margin-top: 14px; padding: 14px;
+      border-radius: 16px; border: 1px solid var(--border);
+      background: linear-gradient(145deg,#fffaf0,#f1f8f6);
+    }
+    .test-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 10px; }
+    .test-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .test-actions button { flex: 1; min-width: 120px; }
+    .test-countdown { font-size: 26px; font-weight: 800; letter-spacing: 0; }
     .log {
       margin-top: 16px; min-height: 90px; padding: 14px; border-radius: 16px;
       background: #0f222a; color: #d9e7ed;
       font: 13px/1.5 Consolas,Monaco,monospace; white-space: pre-wrap;
     }
     @media (max-width: 900px) { .hero, .control-grid { grid-template-columns: 1fr; } }
-    @media (max-width: 560px) { .connection-grid, .stats-grid, .tune-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .connection-grid, .stats-grid, .tune-grid, .test-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -218,6 +227,32 @@
         </div>
 
         <!-- 巡航控制面板 -->
+        <div class="test-panel" id="testPanel">
+          <div class="cruise-header">
+            <h2>采集测试驾驶台</h2>
+            <div class="status-chip offline" id="testState">idle</div>
+          </div>
+          <div class="test-grid">
+            <div>
+              <label for="testVx">Vx (m/s)</label>
+              <input id="testVx" type="number" step="0.05" value="0.50" />
+            </div>
+            <div>
+              <label for="testDuration">运行时长 (s)</label>
+              <input id="testDuration" type="number" step="1" value="60" />
+            </div>
+            <div>
+              <label>剩余时间</label>
+              <div class="test-countdown" id="testCountdown">--</div>
+            </div>
+          </div>
+          <div class="test-actions">
+            <button class="primary" id="testStartBtn">0.5m/s 直行</button>
+            <button class="secondary" id="testStopBtn">立即停车</button>
+            <button class="danger" id="testEstopBtn">急停</button>
+          </div>
+        </div>
+
         <div class="cruise-panel" id="cruisePanel">
           <div class="cruise-header">
             <h2>定速巡航</h2>
@@ -457,6 +492,13 @@
     const cruiseActualVy  = document.getElementById("cruiseActualVy");
     const cruiseTargetWz = document.getElementById("cruiseTargetWz");
     const cruiseActualWz = document.getElementById("cruiseActualWz");
+    const testStateEl = document.getElementById("testState");
+    const testVxInput = document.getElementById("testVx");
+    const testDurationInput = document.getElementById("testDuration");
+    const testCountdownEl = document.getElementById("testCountdown");
+    const testStartBtn = document.getElementById("testStartBtn");
+    const testStopBtn = document.getElementById("testStopBtn");
+    const testEstopBtn = document.getElementById("testEstopBtn");
 
     // ── Tuning constants ──────────────────────────────────────────────────────
     const T = {
@@ -484,6 +526,10 @@
     let lastGpBtns      = { a:false, b:false, x:false, y:false, lb:false, rb:false };
     let speedMultiplier = 1.0;
     let turboActive     = false;
+    let testActive      = false;
+    let testEndTime     = 0;
+    let testCommandTimer = null;
+    let testCountdownTimer = null;
     const keyState      = {};
 
     // ── Init display ──────────────────────────────────────────────────────────
@@ -581,12 +627,19 @@
     }
 
     function publishStop() {
+      publish("/web/test_enable", { data: false });
+      publish("/web/cruise_enable", { data: false });
       normalized = { x: 0, y: 0 }; lateral = 0;
       renderKnob(); updateCommandReadout();
       publish("/cmd_vel_web", { linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} });
     }
 
     function publishEstop(active) {
+      if (active) {
+        stopTestRun();
+        publish("/web/test_enable", { data: false });
+        publish("/web/cruise_enable", { data: false });
+      }
       publish("/web/estop", { data: active });
       if (active) setSocketState("E-STOP", "danger");
       log(active ? "急停已锁定" : "急停已解除");
@@ -817,6 +870,75 @@
     // 初始化滑块显示
     updateCruiseSliderDisplay();
 
+    function setTestState(label, active) {
+      testStateEl.textContent = label;
+      testStateEl.className = "status-chip" + (active ? " recording" : " offline");
+    }
+
+    function buildTestTwist() {
+      const vx = Math.max(-0.8, Math.min(0.8, parseFloat(testVxInput.value) || 0.5));
+      return {
+        linear: { x: vx, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 }
+      };
+    }
+
+    function publishTestCommand() {
+      publish("/web/test_cmd", buildTestTwist());
+      publish("/web/test_enable", { data: true });
+    }
+
+    function updateTestCountdown() {
+      if (!testActive) {
+        testCountdownEl.textContent = "--";
+        return;
+      }
+      const left = Math.max(0, Math.ceil((testEndTime - Date.now()) / 1000));
+      testCountdownEl.textContent = left + "s";
+      if (left <= 0) {
+        stopTestRun();
+        log("测试计时结束，已自动停车");
+      }
+    }
+
+    function startTestRun() {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        log("请先连接 Rosbridge");
+        return;
+      }
+      publishEstop(false);
+      publishStop();
+      const duration = Math.max(1, parseInt(testDurationInput.value, 10) || 60);
+      testActive = true;
+      testEndTime = Date.now() + duration * 1000;
+      setTestState("running", true);
+      publishTestCommand();
+      clearInterval(testCommandTimer);
+      clearInterval(testCountdownTimer);
+      testCommandTimer = setInterval(publishTestCommand, T.commandMs);
+      testCountdownTimer = setInterval(updateTestCountdown, 250);
+      updateTestCountdown();
+      log("采集测试开始: Vx=" + buildTestTwist().linear.x.toFixed(2) + " m/s, " + duration + "s");
+    }
+
+    function stopTestRun() {
+      clearInterval(testCommandTimer);
+      clearInterval(testCountdownTimer);
+      testCommandTimer = null;
+      testCountdownTimer = null;
+      if (testActive) log("采集测试停车");
+      testActive = false;
+      setTestState("idle", false);
+      testCountdownEl.textContent = "--";
+      publish("/web/test_enable", { data: false });
+      publish("/cmd_vel_web", { linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} });
+    }
+
+    testStartBtn.addEventListener("click", startTestRun);
+    testStopBtn.addEventListener("click", () => { stopTestRun(); publishStop(); });
+    testEstopBtn.addEventListener("click", () => publishEstop(true));
+    setTestState("idle", false);
+
     // ── Timers ────────────────────────────────────────────────────────────────
     function startTimers() {
       stopTimers();
@@ -902,6 +1024,7 @@
     function disconnect() {
       cancelReconnect();
       stopTimers();
+      stopTestRun();
       try { socket?.close(); } catch (_) {}
       socket = null;
       setSocketState("Disconnected", "offline");

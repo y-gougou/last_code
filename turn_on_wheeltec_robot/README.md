@@ -183,6 +183,18 @@ tail -n 5 /home/wheeltec/R550PLUS_data_collect/log/normal_001.csv
 
 重点观察 CSV 中的 `record_rate`、`odom_age`、`imu_age`、`current_age`、`cmd_age`。如果 `cmd_age` 很大，说明采集时没有稳定发布 `/cmd_vel`；如果 `current_age` 持续很大，说明电流板串口或 `/current_data` 频率异常。
 
+### Web 端采集测试
+
+Web 页面已加入“采集测试驾驶台”，用于更安全地做 0.5 m/s 直线测试：
+
+1. 打开 Web 页面并连接 Rosbridge。
+2. 启动 `data_collector.launch`。
+3. 在 Web 页面设置 `Vx=0.50`、运行时长，例如 `60s`。
+4. 点击 `0.5m/s 直行`。
+5. 需要立即停车时点击 `立即停车`，紧急情况点击 `急停`。
+
+该模式通过 `/web/test_cmd` 和 `/web/test_enable` 控制，后端会直接输出固定 `/cmd_vel`，因此 CSV 中的 `cmd_vx` 应稳定记录为 `0.500000`。倒计时结束后 Web 端会自动停车。
+
 ---
 
 ## 定速巡航使用方法
