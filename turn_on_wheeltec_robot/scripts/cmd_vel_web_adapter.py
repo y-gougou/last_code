@@ -97,6 +97,7 @@ class WebCmdVelAdapter(object):
         self.min_linear_ratio = rospy.get_param("~min_linear_ratio", 0.20)
         self.min_lateral_ratio = rospy.get_param("~min_lateral_ratio", 0.15)
         self.min_angular_ratio = rospy.get_param("~min_angular_ratio", 0.24)
+        self.cruise_correction_ratio = rospy.get_param("~cruise_correction_ratio", 0.50)
 
         # PID参数
         self.pid_rate = rospy.get_param("~pid_rate", 10.0)  # PID更新频率
@@ -118,9 +119,12 @@ class WebCmdVelAdapter(object):
         self.test_cmd_time = rospy.Time(0)
 
         # PID控制器（每轴一个）
-        self.pid_x = PIDController(kp=0.8, ki=0.1, kd=0.3, output_limit=self.max_linear_x)
-        self.pid_y = PIDController(kp=0.8, ki=0.1, kd=0.3, output_limit=self.max_linear_y)
-        self.pid_angular = PIDController(kp=1.0, ki=0.05, kd=0.2, output_limit=self.max_angular_z)
+        correction_x_limit = self.max_linear_x * self.cruise_correction_ratio
+        correction_y_limit = self.max_linear_y * self.cruise_correction_ratio
+        correction_w_limit = self.max_angular_z * self.cruise_correction_ratio
+        self.pid_x = PIDController(kp=0.35, ki=0.03, kd=0.0, output_limit=correction_x_limit)
+        self.pid_y = PIDController(kp=0.35, ki=0.03, kd=0.0, output_limit=correction_y_limit)
+        self.pid_angular = PIDController(kp=0.45, ki=0.02, kd=0.0, output_limit=correction_w_limit)
 
         self.cmd_pub = rospy.Publisher(self.output_topic, Twist, queue_size=10)
         self.status_pub = rospy.Publisher(self.status_topic, String, queue_size=10, latch=True)
@@ -155,6 +159,9 @@ class WebCmdVelAdapter(object):
 
     def zero_twist(self):
         return Twist()
+
+    def clamp_axis(self, value, limit):
+        return self.clamp(value, limit)
 
     def shape_axis(self, value, limit, deadband, min_ratio):
         if limit <= 0.0:
@@ -326,24 +333,36 @@ class WebCmdVelAdapter(object):
         cmd = Twist()
 
         # X轴PID
-        cmd.linear.x = self.pid_x.compute(
+        correction_x = self.pid_x.compute(
             self.cruise_target.linear.x,
             self.current_velocity.linear.x,
             dt
         )
+        cmd.linear.x = self.clamp_axis(
+            self.cruise_target.linear.x + correction_x,
+            self.max_linear_x
+        )
 
         # Y轴PID
-        cmd.linear.y = self.pid_y.compute(
+        correction_y = self.pid_y.compute(
             self.cruise_target.linear.y,
             self.current_velocity.linear.y,
             dt
         )
+        cmd.linear.y = self.clamp_axis(
+            self.cruise_target.linear.y + correction_y,
+            self.max_linear_y
+        )
 
         # 角速度PID
-        cmd.angular.z = self.pid_angular.compute(
+        correction_wz = self.pid_angular.compute(
             self.cruise_target.angular.z,
             self.current_velocity.angular.z,
             dt
+        )
+        cmd.angular.z = self.clamp_axis(
+            self.cruise_target.angular.z + correction_wz,
+            self.max_angular_z
         )
 
         return cmd
