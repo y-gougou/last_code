@@ -1,51 +1,35 @@
 <launch>
-    <!--
-        R550PLUS 三全向轮机器人数据采集启动文件
-
-        故障标签：
-          0 - 正常状态
-          1 - 驱动异常（单轮堵转）
-          2 - 轮子打滑
-          3 - 电机轴偏心
-          4 - 电池电压偏低
-
-        使用方法（分开启动避免节点冲突）：
-          # 终端1：数据采集
-          roslaunch turn_on_wheeltec_robot data_collector.launch fault_label:=0
-          # 终端2：Web控制（浏览器控制机器人移动）
-          roslaunch turn_on_wheeltec_robot web_control.launch start_base:=false start_current_reader:=false start_data_collector:=false
-
-        滑动窗口参数（用于后续预处理）：
-          窗口长度：100点 = 5秒 @ 20Hz
-          步长：50点 = 2.5秒
-          重叠率：50%
-    -->
-
-    <!-- 故障标签参数 -->
     <arg name="fault_label" default="0" />
+    <arg name="fault_name" default="" />
+    <arg name="fault_mode" default="0" />
+    <arg name="run_id" default="" />
+    <arg name="motion_mode" default="straight_0.5ms" />
+    <arg name="output_dir" default="/home/wheeltec/R550PLUS_data_collect/log" />
+    <arg name="current_port" default="/dev/ttyUSB0" />
+    <arg name="current_baud" default="115200" />
+    <arg name="wheel_speed_topic" default="" />
 
-    <!-- 电流数据读取节点 -->
     <node name="current_reader"
           pkg="turn_on_wheeltec_robot"
           type="current_reader.py"
           output="screen"
           respawn="false">
-        <param name="port" value="/dev/ttyUSB0"/>
-        <param name="baud" value="115200"/>
-        <param name="frame_id" value="current_sensor"/>
+        <param name="port" value="$(arg current_port)" />
+        <param name="baud" value="$(arg current_baud)" />
+        <param name="frame_id" value="current_sensor" />
     </node>
 
-    <!-- 数据采集节点（带时间同步，只采集原始数据） -->
     <node name="data_collector"
           pkg="turn_on_wheeltec_robot"
           type="data_collector.py"
           output="screen"
           respawn="false">
-        <param name="fault_label" value="$(arg fault_label)"/>
-        <param name="output_dir" value="/home/wheeltec/R550PLUS_data_collect/log"/>
-        <param name="rate" value="100"/>
-        <param name="sync_tolerance" value="0.02"/>
-        <param name="auto_start" value="true"/>
+        <param name="fault_label" value="$(arg fault_label)" />
+        <param name="fault_name" value="$(arg fault_name)" />
+        <param name="fault_mode" value="$(arg fault_mode)" />
+        <param name="run_id" value="$(arg run_id)" />
+        <param name="motion_mode" value="$(arg motion_mode)" />
+        <param name="output_dir" value="$(arg output_dir)" />
+        <param name="wheel_speed_topic" value="$(arg wheel_speed_topic)" />
     </node>
-
 </launch>

@@ -11,7 +11,7 @@ Protocol: Text format with XOR checksum
 
 Baud rate: 115200
 
-Published topic: /current_data (std_msgs/Float32MultiArray)
+    Published topic: /current_data (std_msgs/Float32MultiArray)
     data[0] = ch0
     data[1] = ch1
     data[2] = ch2
@@ -60,6 +60,7 @@ class CurrentReader:
         # Statistics
         self.frame_count = 0
         self.error_count = 0
+        self.last_report_time = rospy.Time.now().to_sec()
 
     def parse_frame(self, line):
         """
@@ -89,10 +90,15 @@ class CurrentReader:
             else:
                 recv_checksum_str = line[checksum_start:checksum_end]
 
-            # Parse 3 channel values
+            # Parse current values.  The firmware normally sends three values:
+            #   $CURRENT,ch0,ch1,ch2*XX
+            # A future extended text frame may add a sequence prefix:
+            #   $CURRENT,seq,ch0,ch1,ch2*XX
             parts = data_str.split(',')
+            if len(parts) == 4:
+                parts = parts[1:]
             if len(parts) != 3:
-                rospy.logwarn_throttle(5, "Expected 3 channels, got %d" % len(parts))
+                rospy.logwarn_throttle(5, "Expected 3 current channels, got %d" % len(parts))
                 return None
 
             values = []
@@ -164,8 +170,18 @@ class CurrentReader:
                     self.error_count += 1
 
                 # Print statistics every 10 seconds
-                if self.frame_count % 1000 == 0 and self.frame_count > 0:
-                    rospy.loginfo("Current reader: %d frames OK, %d errors" % (self.frame_count, self.error_count))
+                now = rospy.Time.now().to_sec()
+                if now - self.last_report_time >= 10.0:
+                    rate = self.frame_count / max(1e-6, now - self.last_report_time)
+                    rospy.loginfo(
+                        "Current reader: %.1f Hz in last window, %d total OK, %d errors",
+                        rate,
+                        self.frame_count,
+                        self.error_count,
+                    )
+                    self.frame_count = 0
+                    self.error_count = 0
+                    self.last_report_time = now
 
             except serial.SerialException as e:
                 rospy.logerr("Serial error: %s" % e)
