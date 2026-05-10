@@ -4,7 +4,7 @@
 Current sensor reader node
 Reads $CURRENT,ch0,ch1,ch2*XX\r\n format current data and publishes to ROS topic
 
-Serial port: /dev/ttyUSB1
+Serial port: /dev/ttyUSB0
 Protocol: Text format with XOR checksum
           Format: $CURRENT,-0.0391,-0.0287,-0.1038*7E\r\n
           Checksum: XOR of all bytes from $ to * (exclusive)
@@ -17,7 +17,7 @@ Baud rate: 115200
     data[2] = ch2
 
 Usage:
-    rosrun turn_on_wheeltec_robot current_reader.py _port:=/dev/ttyUSB1 _baud:=115200
+    rosrun turn_on_wheeltec_robot current_reader.py _port:=/dev/ttyUSB0 _baud:=115200
 """
 
 import rospy
@@ -34,7 +34,7 @@ class CurrentReader:
         rospy.init_node('current_reader', anonymous=True)
 
         # Parameters
-        self.port = rospy.get_param('~port', '/dev/ttyUSB1')
+        self.port = rospy.get_param('~port', '/dev/ttyUSB0')
         self.baud = rospy.get_param('~baud', 115200)
         self.timeout = rospy.get_param('~timeout', 1.0)
 
