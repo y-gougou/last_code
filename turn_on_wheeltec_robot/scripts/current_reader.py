@@ -4,7 +4,7 @@
 Current sensor reader node
 Reads $CURRENT,ch0,ch1,ch2*XX\r\n format current data and publishes to ROS topic
 
-Serial port: /dev/ttyUSB0
+Serial port: /dev/ttyUSB1
 Protocol: Text format with XOR checksum
           Format: $CURRENT,-0.0391,-0.0287,-0.1038*7E\r\n
           Checksum: XOR of all bytes from $ to * (exclusive)
@@ -17,7 +17,7 @@ Baud rate: 115200
     data[2] = ch2
 
 Usage:
-    rosrun turn_on_wheeltec_robot current_reader.py _port:=/dev/ttyUSB0 _baud:=115200
+    rosrun turn_on_wheeltec_robot current_reader.py _port:=/dev/ttyUSB1 _baud:=115200
 """
 
 import rospy
@@ -34,7 +34,7 @@ class CurrentReader:
         rospy.init_node('current_reader', anonymous=True)
 
         # Parameters
-        self.port = rospy.get_param('~port', '/dev/ttyUSB0')
+        self.port = rospy.get_param('~port', '/dev/ttyUSB1')
         self.baud = rospy.get_param('~baud', 115200)
         self.timeout = rospy.get_param('~timeout', 1.0)
 
@@ -68,9 +68,13 @@ class CurrentReader:
         Returns: [ch0, ch1, ch2] or None
         """
         try:
-            # Check frame header
-            if FRAME_HEADER not in line:
+            # Align to frame header. Some USB-serial adapters may leave a
+            # partial line in the buffer when the node starts.
+            header_pos = line.find(FRAME_HEADER)
+            if header_pos < 0:
                 return None
+            if header_pos > 0:
+                line = line[header_pos:]
 
             # Find checksum separator
             if FRAME_TAIL not in line:
@@ -172,10 +176,10 @@ class CurrentReader:
                 # Print statistics every 10 seconds
                 now = rospy.Time.now().to_sec()
                 if now - self.last_report_time >= 10.0:
-                    rate = self.frame_count / max(1e-6, now - self.last_report_time)
+                    measured_rate = self.frame_count / max(1e-6, now - self.last_report_time)
                     rospy.loginfo(
                         "Current reader: %.1f Hz in last window, %d total OK, %d errors",
-                        rate,
+                        measured_rate,
                         self.frame_count,
                         self.error_count,
                     )
